@@ -1,4 +1,4 @@
-personal_ws-1.1 en 3196 utf-8
+personal_ws-1.1 en 3225 utf-8
 AAS
 ABI
 ACFAIL
@@ -172,6 +172,7 @@ CERTREQUEST
 CERTVERIF
 CEST
 CHRG
+CL
 CLANGVER
 CLI
 CLOCAL
@@ -449,6 +450,7 @@ HFILE
 HIDIOCINITREPORT
 HIDRDD
 HITRANS
+HL
 HMAC
 HNX
 HOMEBREW
@@ -508,6 +510,7 @@ INVOLT
 IPAR
 IPBX
 IPC
+IPM
 IPs
 IPv
 IRC
@@ -532,6 +535,7 @@ Ioannou
 JAWAN
 JBUS
 JBus
+JK
 JKL
 JRE
 JSON
@@ -763,10 +767,12 @@ NONBLOCK
 NONUT
 NOP
 NOPARENT
+NOTBYPASS
 NOTIFYCMD
 NOTIFYFLAG
 NOTIFYFLAGS
 NOTIFYMSG
+NOTOFF
 NQA
 NTP
 NUT's
@@ -851,6 +857,7 @@ Opti
 OptiUPS
 Orvaldi
 Orzechowski
+OutletSystem
 OutputOverload
 OvrLds
 PBT
@@ -1019,6 +1026,7 @@ REPLBATT
 REQSSL
 RESPIN
 RETPCT
+REXX
 RK
 RMCARD
 RMXL
@@ -1307,6 +1315,10 @@ UPSDESC
 UPSHOST
 UPSIMAGEPATH
 UPSLC
+UPSOutletSystemOutletDelayBeforeReboot
+UPSOutletSystemOutletDelayBeforeShutdown
+UPSOutletSystemOutletDelayBeforeStartup
+UPSOutletSystemOutletSwitchable
 UPSSTATSPATH
 UPSTEMP
 UPScode
@@ -1365,6 +1377,7 @@ Viewsonic
 Viktor
 VirCIO
 Vout
+Vultech
 Václav
 WALKMODE
 WARNFATAL
@@ -1457,6 +1470,7 @@ adkorte
 adm
 admin's
 adminbox
+adoc
 advorder
 ae
 aec
@@ -1495,6 +1509,7 @@ apcsmart
 apctest
 apcupsd
 aphel
+appveyor
 ar
 archlinux
 arduino
@@ -1509,6 +1524,7 @@ armhf
 asapm
 ascii
 asciidoc
+asciidocs
 asciidoctor
 asem
 aspell
@@ -1613,8 +1629,8 @@ bsd
 bsv
 bt
 bti
-btnG
 btn
+btnG
 btt
 buckboosthyst
 buckvolts
@@ -1625,6 +1641,7 @@ bugfixes
 buildbots
 builddir
 bullseye
+busport
 busybox
 bv
 bypassvolts
@@ -1925,6 +1942,7 @@ fcntl
 fd
 fds
 fe
+featureReport
 fenton
 fentonups
 fffdddxxx
@@ -2239,6 +2257,7 @@ lifecycle
 linesensitivity
 linevoltage
 linkdoc
+linksingledoc
 linux
 lipo
 listDeviceClients
@@ -2269,6 +2288,7 @@ lowruntime
 lowvoltsout
 lposix
 lr
+lsd
 lsusb
 lt
 ltdl
@@ -2649,10 +2669,10 @@ qx's
 qxflags
 rD
 rackmount
+raquo
 raritan
 ratedva
 ratedwatts
-raquo
 rb
 rcctl
 readline
@@ -2676,7 +2696,10 @@ regex
 regtype
 releasekeyring
 relicensing
+renderer
+renderers
 repo
+reportId
 reposurgeon
 repotec
 req
@@ -2688,6 +2711,8 @@ ret
 retrydelay
 revdate
 revnumber
+rex
+rexx
 rf
 rfc
 rh
@@ -3062,6 +3087,7 @@ upsuser
 upswired
 uptime
 urb
+url
 urpmi
 usb
 usbconfig
@@ -3176,12 +3202,15 @@ xpg
 xr
 xrealloc
 xsl
+xsl's
 xsltproc
 xstrdup
 xu
 xxxAP
 xxxx
 xxxxAP
+yaml
+yml
 youruid
 yyy
 zaac

@@ -7,17 +7,29 @@ This file lists changes that affect users who installed older versions
 of this software.  When upgrading from an older version, be sure to
 check this file to see if you need to make changes to your system.
 
-NOTE: For packaging (OS distribution or in-house) it is recommended to
+[NOTE]
+======
+For packaging (OS distribution or in-house) it is recommended to
 primarily `./configure --with-all` and then excise `--without-something`
 explicitly for items not supported on your platform, so you do not miss
 out on new NUT features as they come with new releases. Some may require
 that you update your build environment with new third-party dependencies,
 so a broken build of a new NUT release would let you know how to act.
 
+This is a good time to point out that for stricter packaging systems, it may
+be beneficial to add `--enable-option-checking=fatal` to the `./configure`
+command line, in order to quickly pick up any other removed option flags.
+======
+
 Changes from 2.8.0 to 2.8.1
 ---------------------------
 
 - PLANNED: Keep track of any further API clean-up?
+
+- NUT documentation recipes were revised, so many of the text source files
+  were renamed to `*.adoc` pattern. Newly, a `release-notes.pdf` and HTML
+  equivalents are generated. Packages which deliver documentation may need
+  to update the lists of files to ship. [#1953]
 
 - Several improvements regarding simultaneous support of USB devices that
   were previously deemed "identical" and so NUT driver instances did not
@@ -64,6 +76,30 @@ Changes from 2.8.0 to 2.8.1
   application -- such activity was earlier done by packages directly; now
   the packaging recipes may use NUT source-code facilities and package just
   symlinks as relevant for each distro separately [#1462, #1504]
+
+- The `upsd.conf` listing of `LISTEN` addresses was previously inverted
+  (the last listed address was applied first), which was counter-intuitive
+  and fixed for this release. If user configurations somehow relied on this
+  order (e.g. to prioritize IPv6 vs IPv4 listeners), configuration changes
+  may be needed. [#2012]
+
+- The `upsd` configured to listen on IPv6 addresses should handle only
+  IPv6 (and not IPv4-mappings like it might have done before) to avoid
+  surprises and insecurity -- if user configurations somehow relied on
+  this dual support, configuration changes may be needed to specify both
+  desired IP addresses. Note that the daemon logs will now warn if a
+  host name resolves to several addresses (and will only listen on the
+  first hit, as it did before in such cases). [#2012]
+
+- A definitive behavior for `LISTEN *` directives became specified, to try
+  handling both IPv4 and IPv6 "any" address (subject to `upsd` CLI options
+  to only choose one, and to OS abilities). This use-case may be practically
+  implemented as a single IPv6 socket on systems with enabled and required
+  IPv4-mapped IPv6 address support, or as two separate listening sockets -
+  logged messages to this effect (e.g. inability to listen on IPv4 after
+  opening IPv6) are expected on some platforms. End-users may also want to
+  reconfigure their `upsd.conf` files to remove some now-redundant `LISTEN`
+  lines. [#2012]
 
 - Added support for `make sockdebug` for easier developer access to the tool;
   also if `configure --with-dev` is in effect, it would now be installed to
@@ -202,7 +238,7 @@ Changes from 2.7.4 to 2.8.0
   with your platform.
 
 - dummy-ups can now specify `mode` as a driver argument, and separates the
-  notion of `dummy-once` (new default for `*.dev` files that do not change)
+  notion of `dummy-once` (new default for `\*.dev` files that do not change)
   vs. `dummy-loop` (legacy default for `*.seq` and others) [issue #1385]
 
   * Note this can break third-party test scripts which expected `*.dev`
@@ -539,7 +575,7 @@ has been gone for a long time, and the target was ambiguous.
 used newapc, make sure you delete the old binary and fix your
 ups.conf.  Otherwise, you may run the old driver from 1.4.
 
-
-*** File trimmed here on changes from 1.2.2 to 1.4.0 ***
+File trimmed here on changes from 1.2.2 to 1.4.0
+------------------------------------------------
 
 For information before this point, start with version 2.4.1 and work back.

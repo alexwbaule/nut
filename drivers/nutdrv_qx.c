@@ -57,7 +57,7 @@
 	#define DRIVER_NAME	"Generic Q* Serial driver"
 #endif	/* QX_USB */
 
-#define DRIVER_VERSION	"0.33"
+#define DRIVER_VERSION	"0.36"
 
 #ifdef QX_SERIAL
 	#include "serial.h"
@@ -223,6 +223,39 @@ static struct {
 } load = { 0, 0.1, 1 };
 
 static time_t	battery_lastpoll = 0;
+static int	battery_voltage_reports_one_pack = 0, battery_voltage_reports_one_pack_considered = 0;
+
+/* Optionally multiply device-provided "battery.voltage" reading by
+ * the "battery.packs" (reading or common override setting) to end up
+ * with the dstate value representing the voltage of battery assembly,
+ * not that of a single cell/pack (different devices report different
+ * physically meaningful values for that reading).
+ * This shared method can be referenced from subdriver mapping tables.
+ */
+int qx_multiply_battvolt(item_t *item, char *value, const size_t valuelen) {
+	float s = 0;
+
+	/* Adjusted here or not, this method was called at all
+	 * and other code should not multiply again! */
+	battery_voltage_reports_one_pack_considered = 1;
+	if (!battery_voltage_reports_one_pack || batt.packs < 2) {
+		/* (We assume by default that) this device already reports
+		 * the sum-total voltage for the battery assembly - so just
+		 * pass it on unmodified.
+		 * Or we can't reasonably use a "batt.packs" anyway.
+		 */
+		snprintf(value, valuelen, "%s", item->value);
+		return 0;
+	}
+
+	if (sscanf(item->value, "%f", &s) != 1) {
+		upsdebugx(2, "unparsable ss.ss %s", item->value);
+		return -1;
+	}
+
+	snprintf(value, valuelen, "%.2f", s * batt.packs);
+	return 0;
+}
 
 /* Fill batt.volt.act and guesstimate the battery charge
  * if it isn't already available. */
@@ -235,7 +268,10 @@ static int	qx_battery(void)
 		return -1;
 	}
 
-	batt.volt.act = batt.packs * strtod(val, NULL);
+	batt.volt.act = strtod(val, NULL);
+	if (!battery_voltage_reports_one_pack_considered) {
+		batt.volt.act *= batt.packs;
+	}
 
 	if (d_equal(batt.chrg.act, -1) && batt.volt.low > 0 && batt.volt.high > batt.volt.low) {
 
@@ -277,52 +313,95 @@ static int	qx_load(void)
 	return 0;
 }
 
-/* Guesstimation: init */
+/* Init known (readings, configs) and guessed (if needed) battery related values */
 static void	qx_initbattery(void)
 {
+	const char	*val;
+	int batt_packs_known = 0;
+
+	val = dstate_getinfo("battery.voltage.high");
+	if (val) {
+		batt.volt.high = strtod(val, NULL);
+	}
+
+	val = dstate_getinfo("battery.voltage.low");
+	if (val) {
+		batt.volt.low = strtod(val, NULL);
+	}
+
+	val = dstate_getinfo("battery.voltage.nominal");
+	if (val) {
+		batt.volt.nom = strtod(val, NULL);
+	}
+
+	/* If no values are available for both battery.voltage.{low,high}
+	 * either from the UPS or provided by the user in ups.conf,
+	 * but nominal battery.voltage.nom is known,
+	 * try to guesstimate them, but announce it! */
+	if ( (!d_equal(batt.volt.nom, -1)) && (d_equal(batt.volt.low, -1) || d_equal(batt.volt.high, -1))) {
+
+		upslogx(LOG_INFO, "No values for battery high/low voltages");
+
+		/* Basic formula, which should cover most cases */
+		batt.volt.low = 104 * batt.volt.nom / 120;
+		/* Per https://www.csb-battery.com.tw/english/01_product/02_detail.php?fid=17&pid=113
+		 * a nominally 12V battery can have "float charging voltage"
+		 * at 13.5-13.8V and an "equalization charging voltage" (e.g.
+		 * to desulphurize) at 14-15V. Note that per nut-names.txt,
+		 * the "battery.voltage.high" is the practical 100% charge
+		 * value (so equal or a bit less than actual battery.voltage
+		 * reported by the device, when the situation is healthy);
+		 * it is not the voltage that the battery CAN reach on the
+		 * brink of boiling out:
+		 */
+		batt.volt.high = 130 * batt.volt.nom / 120;
+
+		/* Publish these data too */
+		dstate_setinfo("battery.voltage.low", "%.2f", batt.volt.low);
+		dstate_setinfo("battery.voltage.high", "%.2f", batt.volt.high);
+
+		upslogx(LOG_INFO, "Using 'guesstimation' (low: %f, high: %f)!",
+			batt.volt.low, batt.volt.high);
+
+	}
+
+	val = dstate_getinfo("battery.packs");
+	if (val && (strspn(val, "0123456789 .") == strlen(val))) {
+		batt.packs = strtod(val, NULL);
+		batt_packs_known = 1;
+	}
+
+	val = getval("battery_voltage_reports_one_pack");
+	if (val) {
+		battery_voltage_reports_one_pack = 1;
+		/* If we already have a battery.voltage reading from the device,
+		 * it is not yet "adjusted" to consider the multiplication for
+		 * packs (if known; if not - the guesswork and call below for
+		 * qx_battery() should take care of it). Note that it is only
+		 * a few lines above that we might have learned the user-set
+		 * amount of battery packs and that they know the device only
+		 * reports a single pack voltage in the protocol.
+		 * Even if the qx_multiply_battvolt() method was called before
+		 * and set the battery_voltage_reports_one_pack_considered flag,
+		 * it is not too relevant until now *for maths*. However it is
+		 * important to know that the mapping table for this subdriver
+		 * does reference the adjustment method at all (which it would
+		 * encounter and set the flag while querying battery.voltage
+		 * from device and having a non-NULL reading now).
+		 */
+		if (battery_voltage_reports_one_pack_considered) {
+			val = dstate_getinfo("battery.voltage");
+			if (val && batt_packs_known && batt.packs > 1) {
+				batt.volt.act = strtod(val, NULL) * batt.packs;
+				dstate_setinfo("battery.voltage", "%.2f", batt.volt.act);
+			}
+		}
+	}
+
+	/* Guesstimation: init values if not provided by device/overrides */
 	if (!dstate_getinfo("battery.charge") || !dstate_getinfo("battery.runtime")) {
 
-		const char	*val;
-
-		val = dstate_getinfo("battery.voltage.high");
-		if (val) {
-			batt.volt.high = strtod(val, NULL);
-		}
-
-		val = dstate_getinfo("battery.voltage.low");
-		if (val) {
-			batt.volt.low = strtod(val, NULL);
-		}
-
-		val = dstate_getinfo("battery.voltage.nominal");
-		if (val) {
-			batt.volt.nom = strtod(val, NULL);
-		}
-
-		/* If no values are available for both battery.voltage.{low,high}
-		 * either from the UPS or provided by the user in ups.conf,
-		 * try to guesstimate them, but announce it! */
-		if ( (!d_equal(batt.volt.nom, -1)) && (d_equal(batt.volt.low, -1) || d_equal(batt.volt.high, -1))) {
-
-			upslogx(LOG_INFO, "No values for battery high/low voltages");
-
-			/* Basic formula, which should cover most cases */
-			batt.volt.low = 104 * batt.volt.nom / 120;
-			batt.volt.high = 130 * batt.volt.nom / 120;
-
-			/* Publish these data too */
-			dstate_setinfo("battery.voltage.low", "%.2f", batt.volt.low);
-			dstate_setinfo("battery.voltage.high", "%.2f", batt.volt.high);
-
-			upslogx(LOG_INFO, "Using 'guesstimation' (low: %f, high: %f)!",
-				batt.volt.low, batt.volt.high);
-
-		}
-
-		val = dstate_getinfo("battery.packs");
-		if (val && (strspn(val, "0123456789 .") == strlen(val))) {
-			batt.packs = strtod(val, NULL);
-		} else {
+		if (!batt_packs_known) {
 
 			/* qx_battery -> batt.volt.act */
 			if (!qx_battery() && (!d_equal(batt.volt.nom, -1))) {
@@ -336,7 +415,7 @@ static void	qx_initbattery(void)
 				 * therefore choose the one with the highest multiplier. */
 				for (i = 0; packs[i] > 0; i++) {
 
-					if (packs[i] * batt.volt.act > 1.2 * batt.volt.nom) {
+					if (packs[i] * batt.volt.act > 1.25 * batt.volt.nom) {
 						continue;
 					}
 
@@ -348,6 +427,9 @@ static void	qx_initbattery(void)
 					}
 
 					batt.packs = packs[i];
+					upslogx(LOG_INFO,
+						"Autodetected %.0f as number of battery packs [%.0f/%.2f]",
+						batt.packs, batt.volt.nom, batt.volt.act);
 					break;
 
 				}
@@ -1761,11 +1843,12 @@ static void	*ablerex_subdriver_fun(USBDevice_t *device)
  * Richcomm Technologies, Inc. Dec 27 2005 ver 1.1." Maybe other Richcomm UPSes
  * would work with this - better than with the richcomm_usb driver.
  */
+#define ARMAC_READ_SIZE 6
 static int	armac_command(const char *cmd, char *buf, size_t buflen)
 {
-	char	tmpbuf[6];
-	int	ret = 0;
-	size_t	i, bufpos;
+	char tmpbuf[ARMAC_READ_SIZE];
+	int ret = 0;
+	size_t i, bufpos;
 	const size_t cmdlen = strlen(cmd);
 
 	/* UPS ignores (doesn't echo back) unsupported commands which makes
@@ -1790,6 +1873,17 @@ static int	armac_command(const char *cmd, char *buf, size_t buflen)
 	}
 	upsdebugx(4, "armac command %.*s", (int)strcspn(cmd, "\r"), cmd);
 
+	/* Cleanup buffer before sending a new command */
+	for (i = 0; i < 10; i++) {
+		ret = usb_interrupt_read(udev, 0x81,
+			(usb_ctrl_charbuf)tmpbuf, ARMAC_READ_SIZE, 100);
+		if (ret != ARMAC_READ_SIZE) {
+			// Timeout - buffer is clean.
+			break;
+		}
+		upsdebugx(4, "armac cleanup ret i=%" PRIuSIZE " ret=%d ctrl=%02hhx", i, ret, tmpbuf[0]);
+	}
+
 	/* Send command to the UPS in 3-byte chunks. Most fit 1 chunk, except for eg.
 	 * parameterized tests. */
 	for (i = 0; i < cmdlen;) {
@@ -1812,21 +1906,25 @@ static int	armac_command(const char *cmd, char *buf, size_t buflen)
 		return ret;
 	}
 
+	/* Wait for response to buffer */
+	usleep(2000);
 	memset(buf, 0, buflen);
 
 	bufpos = 0;
-	while (bufpos + 6 < buflen) {
+	while (bufpos + ARMAC_READ_SIZE < buflen) {
 		size_t bytes_available;
 
 		/* Read data in 6-byte chunks */
-		ret = usb_interrupt_read(udev,
-			0x81,
-			(usb_ctrl_charbuf)tmpbuf, 6, 1000);
+		ret = usb_interrupt_read(udev, 0x81,
+			(usb_ctrl_charbuf)tmpbuf, ARMAC_READ_SIZE, 1000);
 
 		/* Any errors here mean that we are unable to read a reply
 		 * (which will happen after successfully writing a command
 		 * to the UPS) */
-		if (ret != 6) {
+		if (ret != ARMAC_READ_SIZE) {
+			/* NOTE: If end condition is invalid for particular UPS we might make one
+			 * request more and get this error. If bufpos > (say) 10 this could be ignored
+			 * and the reply correctly read. */
 			upsdebugx(1,
 				"interrupt read error: %s (%d)",
 				ret ? nut_usb_strerror(ret) : "timeout",
@@ -1840,20 +1938,66 @@ static int	armac_command(const char *cmd, char *buf, size_t buflen)
 			tmpbuf[0], tmpbuf[1], tmpbuf[2], tmpbuf[3], tmpbuf[4], tmpbuf[5],
 			tmpbuf[1], tmpbuf[2], tmpbuf[3], tmpbuf[4], tmpbuf[5]);
 
+		/*
+		 * On most tested devices (including R/2000I/PSW) this was equal to the number of
+		 * bytes returned in the buffer, but on some newer UPS (R/3000I/PF1) it was 1 more
+		 * (1 control + 5 bytes transferred and bytes_available equal to 6 instead of 5).
+		 *
+		 * Current assumption is that this is number of bytes available on the UPS side
+		 * with up to 5 (ret - 1) transferred.
+		 */
 		bytes_available = (unsigned char)tmpbuf[0] & 0x0f;
 		if (bytes_available == 0) {
 			/* End of transfer */
 			break;
 		}
 
-		memcpy(buf + bufpos, tmpbuf + 1, bytes_available);
-		bufpos += bytes_available;
+		if (bytes_available > ARMAC_READ_SIZE - 1) {
+			/* Single interrupt transfer has 1 control + 5 data bytes */
+			bytes_available = ARMAC_READ_SIZE - 1;
+		}
+
+		/* Copy bytes into the final buffer while detecting end of line - \r */
+		for (i = 0; i < bytes_available; i++) {
+			if (tmpbuf[i + 1] == 0x00 && bufpos == 0) {
+				/* Happens when a manually turned off UPS is connected to the USB */
+				upsdebugx(3, "null byte read - is UPS off?");
+				return 0;
+			}
+
+			/* Vultech V2000 seems to use 0x00 within status bits. This might mean "unsupported".
+			 * or something else completely. */
+			if (tmpbuf[i + 1] == 0x00) {
+				if (bufpos >= 38) {
+					upsdebugx(3, "found null byte in status bits at %" PRIuSIZE " byte, assuming 0.", bufpos);
+					buf[bufpos++] = '0';
+					continue;
+				} else {
+					upsdebugx(3, "found null byte in data stream - interrupting read.");
+					/* Break through two loops */
+					goto end_of_message;
+				}
+			}
+
+			buf[bufpos++] = tmpbuf[i + 1];
+
+			if (tmpbuf[i + 1] == 0x0d) {
+				if (i + 1 != bytes_available) {
+					upsdebugx(3, "trailing bytes in serial transmission found: %" PRIuSIZE "  copied out of %" PRIuSIZE,
+						i + 1, bytes_available
+					);
+				}
+				/* Break through two loops */
+				goto end_of_message;
+			}
+		}
 
 		if (bytes_available <= 2) {
 			/* Slow down, let the UPS buffer more bytes */
-			usleep(15000);
+			usleep(10000);
 		}
 	}
+end_of_message:
 
 	if (bufpos + 6 >= buflen) {
 		upsdebugx(2, "Protocol error, too much data read.");
@@ -2680,6 +2824,11 @@ void	upsdrv_makevartable(void)
 	addvar(VAR_VALUE, "idleload",
 		"Minimum load to be used for runtime calculation");
 
+	addvar(VAR_FLAG, "battery_voltage_reports_one_pack",
+		"If your device natively reports battery.voltage of a single cell/pack, "
+		"multiply that into voltage of the whole battery assembly. "
+		"You may need an override.battery.packs=N setting also.");
+
 #ifdef QX_USB
 	addvar(VAR_VALUE, "subdriver", "Serial-over-USB subdriver selection");
 
@@ -2869,6 +3018,9 @@ void	upsdrv_initups(void)
 		getval("serial") ||
 		getval("bus") ||
 		getval("langid_fix")
+#if (defined WITH_USB_BUSPORT) && (WITH_USB_BUSPORT)
+		|| getval("busport")
+#endif
 	) {
 		/* USB */
 		is_usb = 1;
@@ -2960,10 +3112,10 @@ void	upsdrv_initups(void)
 
 	warn_if_bad_usb_port_filename(device_path);
 
-	#ifndef TESTING
+# ifndef TESTING
 		int	ret, langid;
 		char	tbuf[255];	/* Some devices choke on size > 255 */
-		char	*regex_array[7];
+		char	*regex_array[USBMATCHER_REGEXP_ARRAY_LIMIT];
 
 		char	*subdrv = getval("subdriver");
 
@@ -2974,6 +3126,13 @@ void	upsdrv_initups(void)
 		regex_array[4] = getval("serial");
 		regex_array[5] = getval("bus");
 		regex_array[6] = getval("device");
+#  if (defined WITH_USB_BUSPORT) && (WITH_USB_BUSPORT)
+		regex_array[7] = getval("busport");
+#  else
+		if (getval("busport")) {
+			upslogx(LOG_WARNING, "\"busport\" is configured for the device, but is not actually handled by current build combination of NUT and libusb (ignored)");
+		}
+#  endif
 
 		/* Check for language ID workaround (#1) */
 		if (getval("langid_fix")) {
@@ -3089,11 +3248,11 @@ void	upsdrv_initups(void)
 			}
 		}
 
-	#endif	/* TESTING */
+# endif	/* TESTING */
 
-	#ifdef QX_SERIAL
+# ifdef QX_SERIAL
 	}	/* is_usb */
-	#endif	/* QX_SERIAL */
+# endif	/* QX_SERIAL */
 
 #endif	/* QX_USB */
 
@@ -3113,23 +3272,22 @@ void	upsdrv_cleanup(void)
 
 #ifndef TESTING
 
-#ifdef QX_SERIAL
+# ifdef QX_SERIAL
 
-	#ifdef QX_USB
+#  ifdef QX_USB
 	if (!is_usb) {
-	#endif	/* QX_USB */
+#  endif	/* QX_USB */
 
 		ser_set_dtr(upsfd, 0);
 		ser_close(upsfd, device_path);
 
-	#ifdef QX_USB
+#  ifdef QX_USB
 	} else {	/* is_usb */
-	#endif	/* QX_USB */
+#  endif	/* QX_USB */
 
-#endif	/* QX_SERIAL */
+# endif	/* QX_SERIAL */
 
-#ifdef QX_USB
-
+# ifdef QX_USB
 		usb->close_dev(udev);
 		USBFreeExactMatcher(reopen_matcher);
 		USBFreeRegexMatcher(regex_matcher);
@@ -3138,12 +3296,15 @@ void	upsdrv_cleanup(void)
 		free(usbdevice.Serial);
 		free(usbdevice.Bus);
 		free(usbdevice.Device);
+#  if (defined WITH_USB_BUSPORT) && (WITH_USB_BUSPORT)
+		free(usbdevice.BusPort);
+#  endif
 
-	#ifdef QX_SERIAL
+#  ifdef QX_SERIAL
 	}	/* is_usb */
-	#endif	/* QX_SERIAL */
+#  endif	/* QX_SERIAL */
 
-#endif	/* QX_USB */
+# endif	/* QX_USB */
 
 #endif	/* TESTING */
 
@@ -3561,6 +3722,7 @@ static bool_t	qx_ups_walk(walkmode_t mode)
 	if (mode == QX_WALKMODE_FULL_UPDATE) {
 		batt.runt.act = -1;
 		batt.chrg.act = -1;
+		battery_voltage_reports_one_pack_considered = 0;
 	}
 
 	/* Clear data from previous_item */
@@ -3793,7 +3955,10 @@ static bool_t	qx_ups_walk(walkmode_t mode)
 				 * https://github.com/networkupstools/nut/pull/1027
 				 */
 
-				batt.volt.act = batt.packs * strtod(val, NULL);
+				batt.volt.act = strtod(val, NULL);
+				if (!battery_voltage_reports_one_pack_considered) {
+					batt.volt.act *= batt.packs;
+				}
 
 				if (batt.volt.act > 0 && batt.volt.low > 0 && batt.volt.high > batt.volt.low) {
 

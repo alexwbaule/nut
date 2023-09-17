@@ -288,16 +288,25 @@ void storeval(const char *var, char *val)
 	/* NOTE: (FIXME?) The override and default mechanisms here
 	 * effectively bypass both VAR_SENSITIVE protections and
 	 * the constraint of having previously defined the name by
-	 * addvar() in a driver codebase.
+	 * addvar() in a driver codebase, or of having a dot in it.
+	 * See https://github.com/networkupstools/nut/issues/1891
+	 * if this would need solving eventually. At the moment the
+	 * sensitivity impacts certain auth values for netxml-ups
+	 * and snmp-ups reading from vartab directly, and overrides
+	 * are ignored - so no practical problem to solve right now.
 	 */
 	if (!strncasecmp(var, "override.", 9)) {
+		/* NOTE: No regard for VAR_SENSITIVE here */
 		dstate_setinfo(var+9, "%s", val);
 		dstate_setflags(var+9, ST_FLAG_IMMUTABLE);
+		dparam_setinfo(var, val);
 		return;
 	}
 
 	if (!strncasecmp(var, "default.", 8)) {
+		/* NOTE: No regard for VAR_SENSITIVE here */
 		dstate_setinfo(var+8, "%s", val);
+		dparam_setinfo(var, val);
 		return;
 	}
 
